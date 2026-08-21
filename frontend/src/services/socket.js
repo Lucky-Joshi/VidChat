@@ -1,8 +1,10 @@
 import { io } from 'socket.io-client';
+import { ROOM_ID } from '../utils/constants';
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
 
 let socket = null;
+let currentDisplayName = null;
 
 export function connectSocket() {
   if (socket) {
@@ -31,45 +33,51 @@ export function getSocket() {
   return socket;
 }
 
-export function joinRoom() {
+export function joinRoom(displayName) {
+  currentDisplayName = displayName ?? localStorage.getItem('displayName') ?? '';
   if (socket?.connected) {
-    console.log('[SOCKET] JOIN-ROOM emitted');
-    socket.emit('join-room');
+    console.log(`[SOCKET] JOIN-ROOM emitted (name=${currentDisplayName})`);
+    socket.emit('join-room', { roomId: ROOM_ID, name: currentDisplayName });
   } else {
     console.warn('[SOCKET] Cannot join room - socket not connected');
   }
 }
 
-export function leaveRoom() {
+export function updateName(name) {
+  currentDisplayName = name;
   if (socket?.connected) {
-    socket.emit('leave-room');
+    console.log(`[SOCKET] UPDATE-NAME emitted (name=${name})`);
+    socket.emit('update-name', { name });
   }
 }
 
-export function sendOffer(to, offer) {
+export function leaveRoom() {
   if (socket?.connected) {
-    console.log('[SIGNAL] OFFER SENT');
-    socket.emit('offer', { to, offer });
+    socket.emit('leave-room', { roomId: ROOM_ID });
+  }
+}
+
+export function sendOffer(target, offer) {
+  if (socket?.connected) {
+    console.log(`[SIGNAL] OFFER SENT -> ${target}`);
+    socket.emit('offer', { target, offer });
   } else {
     console.warn('[SIGNAL] Cannot send offer - socket not connected');
   }
 }
 
-export function sendAnswer(to, answer) {
+export function sendAnswer(target, answer) {
   if (socket?.connected) {
-    console.log('[SIGNAL] ANSWER SENT');
-    socket.emit('answer', { to, answer });
+    console.log(`[SIGNAL] ANSWER SENT -> ${target}`);
+    socket.emit('answer', { target, answer });
   } else {
     console.warn('[SIGNAL] Cannot send answer - socket not connected');
   }
 }
 
-export function sendIceCandidate(to, candidate) {
+export function sendIceCandidate(target, candidate) {
   if (socket?.connected) {
-    console.log('[SIGNAL] ICE SENT');
-    socket.emit('ice-candidate', { to, candidate });
-  } else {
-    console.warn('[SIGNAL] Cannot send ICE - socket not connected');
+    socket.emit('ice-candidate', { target, candidate });
   }
 }
 

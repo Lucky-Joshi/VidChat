@@ -3,291 +3,390 @@ import { RTC_CONFIG } from '../utils/constants';
 import { sendOffer, sendAnswer, sendIceCandidate } from '../services/socket';
 
 export function usePeer({
-  partnerId,
+  mySocketId,
   localStream,
-  shouldCreateOffer,
+  remoteParticipants,
   onOffer,
   onAnswer,
   onIceCandidate,
-  onUserLeft,
+  onPeersReset,
+  showToast,
 }) {
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [isPeerConnected, setIsPeerConnected] = useState(false);
+  const [remoteStreams, setRemoteStreams] = useState({});
 
-  const peerRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-  const remoteStreamRef = useRef(null);
-  const pendingIceCandidatesRef = useRef([]);
-  const offerCreatedForPeerRef = useRef(null);
-  const activePeerIdRef = useRef(null);
+  const peerConnectionsRef = useRef({});
+  const remoteStreamsRef = useRef({});
+  const pendingIceRef = useRef({});
+  const pendingOffersRef = useRef([]);
+  const makingOfferRef = useRef({});
+  const lastFailureToastRef = useRef({});
+  const localStreamRef = useRef(null);
+  const mySocketIdRef = useRef(mySocketId);
+  const prevParticipantIdsRef = useRef(new Set());
 
-  const attachRemoteStream = useCallback((stream) => {
-    setRemoteStream(stream);
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = stream;
-      console.log('[PEER] REMOTE STREAM RECEIVED');
-      console.log('[SIGNAL] REMOTE STREAM RECEIVED');
-    }
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
+
+  useEffect(() => {
+    mySocketIdRef.current = mySocketId;
+  }, [mySocketId]);
+
+  const isInitiatorFor = useCallback((peerId) => {
+    const myId = mySocketIdRef.current;
+    return Boolean(myId && myId < peerId);
   }, []);
 
-  const destroyPeer = useCallback(() => {
-    const peer = peerRef.current;
-    if (peer) {
-      peer.ontrack = null;
-      peer.onicecandidate = null;
-      peer.onconnectionstatechange = null;
-      peer.oniceconnectionstatechange = null;
-      peer.close();
-      console.log('[PEER] PEER CONNECTION CLOSED');
-      peerRef.current = null;
-    }
-    pendingIceCandidatesRef.current = [];
-    remoteStreamRef.current = null;
-    offerCreatedForPeerRef.current = null;
-    setIsPeerConnected(false);
-    setRemoteStream(null);
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-    console.log('[PEER] REMOTE STREAM CLEARED');
-  }, []);
-
-  const createPeerConnection = useCallback(() => {
-    if (peerRef.current) {
-      return peerRef.current;
-    }
-
-    const peer = new RTCPeerConnection(RTC_CONFIG);
-    peerRef.current = peer;
-    console.log('[PEER] RTCPeerConnection created');
-
-    peer.onicecandidate = (event) => {
-      if (event.candidate && activePeerIdRef.current) {
-        sendIceCandidate(activePeerIdRef.current, event.candidate);
-      }
-    };
-
-    peer.onconnectionstatechange = () => {
-      console.log(`[PEER] connectionState=${peer.connectionState}`);
-      setIsPeerConnected(peer.connectionState === 'connected');
-    };
-
-    peer.oniceconnectionstatechange = () => {
-      console.log(`[PEER] iceConnectionState=${peer.iceConnectionState}`);
-    };
-
-    peer.ontrack = (event) => {
-      if (!remoteStreamRef.current) {
-        remoteStreamRef.current = new MediaStream();
-      }
-
-      event.streams[0]?.getTracks().forEach((track) => {
-        const hasTrack = remoteStreamRef.current
-          .getTracks()
-          .some((existingTrack) => existingTrack.id === track.id);
-        if (!hasTrack) {
-          remoteStreamRef.current.addTrack(track);
+  const notifyConnectionFailure = useCallback(
+    (peerId) => {
+      const now = Date.now();
+      if (now - (lastFailureToastRef.current[peerId] || 0) > 15000) {
+        lastFailureToastRef.current[peerId] = now;
+        if (typeof showToast === 'function') {
+          showToast('Connection issue with a participant. Trying to recover...');
         }
-      });
+      }
+    },
+    [showToast]
+  );
 
-      attachRemoteStream(remoteStreamRef.current);
-    };
+  const flushPendingIceCandidates = useCallback(async (peerId) => {
+    const peer = peerConnectionsRef.current[peerId];
+    const queue = pendingIceRef.current[peerId];
+    if (!peer || !peer.remoteDescription || !queue || queue.length === 0) {
+      return;
+    }
+    pendingIceRef.current[peerId] = [];
+    while (queue.length > 0) {
+      const candidate = queue.shift();
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error(`[PEER] Failed to add queued ICE candidate for ${peerId}:`, error);
+      }
+    }
+  }, []);
 
-    return peer;
-  }, [attachRemoteStream]);
+  const negotiateIfNeeded = useCallback(
+    async (peerId) => {
+      const peer = peerConnectionsRef.current[peerId];
+      if (!peer || peer.signalingState !== 'stable' || makingOfferRef.current[peerId]) {
+        return;
+      }
+      if (!isInitiatorFor(peerId)) {
+        return;
+      }
+
+      makingOfferRef.current[peerId] = true;
+      try {
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        sendOffer(peerId, peer.localDescription);
+        console.log(`[PEER] OFFER CREATED for ${peerId}`);
+      } catch (error) {
+        console.error(`[PEER] Negotiation failed with ${peerId}:`, error);
+      } finally {
+        makingOfferRef.current[peerId] = false;
+      }
+    },
+    [isInitiatorFor]
+  );
 
   const syncLocalTracks = useCallback(
-    (peer) => {
-      if (!peer || !localStream) {
+    (peer, peerId) => {
+      const stream = localStreamRef.current;
+      if (!peer || !stream) {
         return;
       }
 
       const senders = peer.getSenders();
-      localStream.getTracks().forEach((track) => {
+      let addedNewTrack = false;
+
+      stream.getTracks().forEach((track) => {
         const sender = senders.find((s) => s.track?.kind === track.kind);
         if (sender) {
           if (sender.track?.id !== track.id) {
             sender.replaceTrack(track).catch((error) => {
-              console.error('[PEER] replaceTrack failed:', error);
+              console.error(`[PEER] replaceTrack failed for ${peerId}:`, error);
             });
           }
         } else {
-          peer.addTrack(track, localStream);
+          peer.addTrack(track, stream);
+          addedNewTrack = true;
         }
       });
+
+      if (addedNewTrack) {
+        negotiateIfNeeded(peerId);
+      }
     },
-    [localStream]
+    [negotiateIfNeeded]
   );
 
-  const flushPendingIceCandidates = useCallback(async () => {
-    const peer = peerRef.current;
-    if (!peer || !peer.remoteDescription) {
-      return;
-    }
-
-    while (pendingIceCandidatesRef.current.length > 0) {
-      const candidate = pendingIceCandidatesRef.current.shift();
-      try {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (error) {
-        console.error('[PEER] Failed to add queued ICE candidate:', error);
+  const createPeerConnection = useCallback(
+    (peerId) => {
+      if (peerConnectionsRef.current[peerId]) {
+        return peerConnectionsRef.current[peerId];
       }
+
+      const peer = new RTCPeerConnection(RTC_CONFIG);
+      peerConnectionsRef.current[peerId] = peer;
+      console.log(`[PEER] RTCPeerConnection created for ${peerId}`);
+
+      peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendIceCandidate(peerId, event.candidate);
+        }
+      };
+
+      peer.ontrack = (event) => {
+        let stream = remoteStreamsRef.current[peerId];
+        if (!stream) {
+          stream = new MediaStream();
+          remoteStreamsRef.current[peerId] = stream;
+        }
+
+        const incomingTracks =
+          event.streams && event.streams[0] ? event.streams[0].getTracks() : [event.track];
+        incomingTracks.forEach((track) => {
+          if (!stream.getTracks().some((existing) => existing.id === track.id)) {
+            stream.addTrack(track);
+          }
+        });
+
+        console.log(`[PEER] REMOTE TRACK RECEIVED from ${peerId}`);
+        setRemoteStreams({ ...remoteStreamsRef.current });
+      };
+
+      peer.onconnectionstatechange = () => {
+        console.log(`[PEER] ${peerId} connectionState=${peer.connectionState}`);
+        if (peer.connectionState === 'failed') {
+          notifyConnectionFailure(peerId);
+          try {
+            peer.restartIce();
+          } catch (error) {
+            console.error(`[PEER] ICE restart failed for ${peerId}:`, error);
+          }
+        }
+      };
+
+      peer.onnegotiationneeded = () => {
+        negotiateIfNeeded(peerId);
+      };
+
+      syncLocalTracks(peer, peerId);
+
+      return peer;
+    },
+    [notifyConnectionFailure, negotiateIfNeeded, syncLocalTracks]
+  );
+
+  const removePeerConnection = useCallback((peerId) => {
+    const peer = peerConnectionsRef.current[peerId];
+    if (peer) {
+      peer.ontrack = null;
+      peer.onicecandidate = null;
+      peer.onconnectionstatechange = null;
+      peer.onnegotiationneeded = null;
+      try {
+        peer.close();
+      } catch (error) {
+        console.error(`[PEER] Error closing connection for ${peerId}:`, error);
+      }
+      delete peerConnectionsRef.current[peerId];
+      console.log(`[PEER] PEER CONNECTION CLOSED for ${peerId}`);
+    }
+    delete pendingIceRef.current[peerId];
+    delete makingOfferRef.current[peerId];
+    if (remoteStreamsRef.current[peerId]) {
+      delete remoteStreamsRef.current[peerId];
+      setRemoteStreams({ ...remoteStreamsRef.current });
     }
   }, []);
 
-  const createAndSendOffer = useCallback(async () => {
-    if (!partnerId || !localStream || offerCreatedForPeerRef.current === partnerId) {
-      return;
-    }
-
-    const peer = createPeerConnection();
-    syncLocalTracks(peer);
-
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    sendOffer(partnerId, peer.localDescription);
-    offerCreatedForPeerRef.current = partnerId;
-  }, [partnerId, localStream, createPeerConnection, syncLocalTracks]);
-
-  useEffect(() => {
-    if (!partnerId) {
-      activePeerIdRef.current = null;
-      destroyPeer();
-      return;
-    }
-
-    if (activePeerIdRef.current !== partnerId) {
-      destroyPeer();
-      activePeerIdRef.current = partnerId;
-    }
-
-    const peer = createPeerConnection();
-    syncLocalTracks(peer);
-  }, [partnerId, localStream, createPeerConnection, destroyPeer, syncLocalTracks]);
-
-  useEffect(() => {
-    if (!shouldCreateOffer || !partnerId || !localStream) {
-      return;
-    }
-
-    createAndSendOffer().catch((error) => {
-      console.error('[PEER] Failed to create/send offer:', error);
+  const destroyAllPeers = useCallback(() => {
+    Object.keys(peerConnectionsRef.current).forEach((peerId) => {
+      removePeerConnection(peerId);
     });
-  }, [shouldCreateOffer, partnerId, localStream, createAndSendOffer]);
+    pendingOffersRef.current = [];
+    prevParticipantIdsRef.current = new Set();
+    console.log('[PEER] ALL PEER CONNECTIONS CLEARED');
+  }, [removePeerConnection]);
 
-  useEffect(() => {
-    if (!onOffer) {
-      return;
-    }
+  const processOffer = useCallback(
+    async (from, offer) => {
+      if (!localStreamRef.current) {
+        console.log(`[PEER] Offer from ${from} buffered (local media not ready)`);
+        pendingOffersRef.current.push({ from, offer });
+        return;
+      }
 
-    onOffer(async (offer, from) => {
-      activePeerIdRef.current = from;
-      console.log('[SIGNAL] OFFER RECEIVED');
+      try {
+        const peer = createPeerConnection(from);
+        if (peer.signalingState !== 'stable') {
+          console.log(
+            `[PEER] Offer from ${from} ignored (signalingState=${peer.signalingState})`
+          );
+          return;
+        }
 
-      const peer = createPeerConnection();
-      syncLocalTracks(peer);
+        console.log(`[SIGNAL] OFFER HANDLED from=${from}`);
+        await peer.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        sendAnswer(from, peer.localDescription);
+        await flushPendingIceCandidates(from);
+      } catch (error) {
+        console.error(`[PEER] Failed to handle offer from ${from}:`, error);
+      }
+    },
+    [createPeerConnection, flushPendingIceCandidates]
+  );
 
-      await peer.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      sendAnswer(from, peer.localDescription);
-      await flushPendingIceCandidates();
-    });
-  }, [onOffer, createPeerConnection, syncLocalTracks, flushPendingIceCandidates]);
+  const handleOffer = processOffer;
 
-  useEffect(() => {
-    if (!onAnswer) {
-      return;
-    }
-
-    onAnswer(async (answer) => {
-      console.log('[SIGNAL] ANSWER RECEIVED');
-      const peer = peerRef.current;
+  const handleAnswer = useCallback(
+    async (answer, from) => {
+      const peer = peerConnectionsRef.current[from];
       if (!peer) {
+        console.warn(`[PEER] Answer from unknown peer ${from} ignored`);
+        return;
+      }
+      if (peer.signalingState !== 'have-local-offer') {
+        console.log(
+          `[PEER] Answer from ${from} ignored (signalingState=${peer.signalingState})`
+        );
         return;
       }
 
-      await peer.setRemoteDescription(new RTCSessionDescription(answer));
-      await flushPendingIceCandidates();
-    });
-  }, [onAnswer, flushPendingIceCandidates]);
-
-  useEffect(() => {
-    if (!onIceCandidate) {
-      return;
-    }
-
-    onIceCandidate(async (candidate, from) => {
-      if (!candidate) {
-        return;
+      try {
+        console.log(`[SIGNAL] ANSWER HANDLED from=${from}`);
+        await peer.setRemoteDescription(new RTCSessionDescription(answer));
+        await flushPendingIceCandidates(from);
+      } catch (error) {
+        console.error(`[PEER] Failed to handle answer from ${from}:`, error);
       }
+    },
+    [flushPendingIceCandidates]
+  );
 
-      activePeerIdRef.current = from;
-      console.log('[SIGNAL] ICE RECEIVED');
+  const handleIceCandidate = useCallback(
+    async (candidate, from) => {
+      if (!candidate) return;
 
-      const peer = createPeerConnection();
-      if (peer.remoteDescription) {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      const peer = peerConnectionsRef.current[from];
+      if (peer && peer.remoteDescription) {
+        try {
+          await peer.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (error) {
+          console.error(`[PEER] Failed to add ICE candidate from ${from}:`, error);
+        }
       } else {
-        pendingIceCandidatesRef.current.push(candidate);
+        if (!pendingIceRef.current[from]) {
+          pendingIceRef.current[from] = [];
+        }
+        pendingIceRef.current[from].push(candidate);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!onOffer) return;
+    onOffer(handleOffer);
+  }, [onOffer, handleOffer]);
+
+  useEffect(() => {
+    if (!onAnswer) return;
+    onAnswer(handleAnswer);
+  }, [onAnswer, handleAnswer]);
+
+  useEffect(() => {
+    if (!onIceCandidate) return;
+    onIceCandidate(handleIceCandidate);
+  }, [onIceCandidate, handleIceCandidate]);
+
+  useEffect(() => {
+    if (!onPeersReset) return;
+    onPeersReset(destroyAllPeers);
+  }, [onPeersReset, destroyAllPeers]);
+
+  useEffect(() => {
+    if (!localStream || !mySocketId) return;
+
+    remoteParticipants.forEach((participant) => {
+      const peerId = participant.socketId;
+      if (peerId === mySocketId) return;
+      if (isInitiatorFor(peerId)) {
+        createPeerConnection(peerId);
       }
     });
-  }, [onIceCandidate, createPeerConnection]);
+  }, [remoteParticipants, localStream, mySocketId, isInitiatorFor, createPeerConnection]);
 
   useEffect(() => {
-    if (!onUserLeft) {
-      return;
-    }
+    if (!localStream) return;
 
-    onUserLeft(() => {
-      console.log('[PEER] USER LEFT RECEIVED');
-      activePeerIdRef.current = null;
-      destroyPeer();
+    Object.entries(peerConnectionsRef.current).forEach(([peerId, peer]) => {
+      syncLocalTracks(peer, peerId);
     });
-  }, [onUserLeft, destroyPeer]);
+
+    const buffered = pendingOffersRef.current;
+    if (buffered.length > 0) {
+      pendingOffersRef.current = [];
+      (async () => {
+        for (const { from, offer } of buffered) {
+          await processOffer(from, offer);
+        }
+      })();
+    }
+  }, [localStream, remoteParticipants, syncLocalTracks, processOffer]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      console.log('[PEER] REMOTE STREAM RECEIVED');
-      console.log('[SIGNAL] REMOTE STREAM RECEIVED');
+    const currentIds = new Set(remoteParticipants.map((p) => p.socketId));
+    for (const knownId of prevParticipantIdsRef.current) {
+      if (!currentIds.has(knownId)) {
+        removePeerConnection(knownId);
+      }
     }
-  }, [remoteStream]);
+    prevParticipantIdsRef.current = currentIds;
+  }, [remoteParticipants, removePeerConnection]);
 
   useEffect(() => {
     return () => {
-      activePeerIdRef.current = null;
-      destroyPeer();
+      Object.values(peerConnectionsRef.current).forEach((peer) => {
+        try {
+          peer.close();
+        } catch (error) {
+          console.error('[PEER] Error closing connection during unmount:', error);
+        }
+      });
+      peerConnectionsRef.current = {};
     };
-  }, [destroyPeer]);
+  }, []);
 
-  const replaceTrack = useCallback(async (newStream) => {
-    const peer = peerRef.current;
-    if (!peer || !newStream) {
+  const replaceVideoTrackForAllPeers = useCallback((stream) => {
+    const track = stream?.getVideoTracks?.()[0];
+    if (!track) {
       return false;
     }
 
-    const screenOrCameraTrack = newStream.getVideoTracks()[0];
-    if (!screenOrCameraTrack) {
-      return false;
-    }
+    Object.entries(peerConnectionsRef.current).forEach(([peerId, peer]) => {
+      const sender = peer.getSenders().find((s) => s.track?.kind === 'video');
+      if (sender) {
+        sender.replaceTrack(track).catch((error) => {
+          console.error(`[PEER] replaceTrack failed for ${peerId}:`, error);
+        });
+      } else {
+        peer.addTrack(track, stream);
+      }
+    });
 
-    const sender = peer
-      .getSenders()
-      .find((currentSender) => currentSender.track && currentSender.track.kind === 'video');
-    if (!sender) {
-      return false;
-    }
-
-    await sender.replaceTrack(screenOrCameraTrack);
     return true;
   }, []);
 
   return {
-    remoteStream,
-    isPeerConnected,
-    remoteVideoRef,
-    replaceTrack,
-    destroyPeer,
+    remoteStreams,
+    replaceVideoTrackForAllPeers,
+    destroyAllPeers,
   };
 }

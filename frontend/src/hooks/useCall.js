@@ -2,28 +2,32 @@ import { useEffect, useRef } from 'react';
 import { useMedia } from './useMedia';
 import { useSocket } from './useSocket';
 import { usePeer } from './usePeer';
+import { useSpeakingDetection } from './useSpeaking';
 import { sendMediaState } from '../services/socket';
 
 const SCREEN_SHARE_UNSUPPORTED_MESSAGE = 'Screen sharing is not supported on this device.';
 
-export function useCall({ showToast } = {}) {
+export function useCall({ displayName, showToast } = {}) {
   const media = useMedia();
-  const socket = useSocket();
+  const socket = useSocket({ displayName });
   const peer = usePeer({
-    partnerId: socket.partnerId,
+    mySocketId: socket.socketId,
     localStream: media.localStream,
-    shouldCreateOffer: socket.shouldCreateOffer,
+    remoteParticipants: socket.remoteParticipants,
     onOffer: socket.onOffer,
     onAnswer: socket.onAnswer,
     onIceCandidate: socket.onIceCandidate,
-    onUserLeft: socket.onUserLeft,
+    onPeersReset: socket.onPeersReset,
+    showToast,
   });
+
+  const speakingIds = useSpeakingDetection(peer.remoteStreams, media.localStream);
 
   const prevMicRef = useRef(media.isMicEnabled);
   const prevCamRef = useRef(media.isCamEnabled);
 
   useEffect(() => {
-    if (!media.localStream || !socket.partnerId) return;
+    if (!media.localStream || !socket.socketId) return;
 
     if (prevMicRef.current !== media.isMicEnabled) {
       console.log(`[useCall] Mic state change: ${media.isMicEnabled ? 'on' : 'off'}`);
@@ -36,45 +40,25 @@ export function useCall({ showToast } = {}) {
       sendMediaState('camera', media.isCamEnabled);
       prevCamRef.current = media.isCamEnabled;
     }
-  }, [media.localStream, media.isMicEnabled, media.isCamEnabled, socket.partnerId]);
+  }, [media.localStream, media.isMicEnabled, media.isCamEnabled, socket.socketId]);
 
-  useEffect(() => {
-    if (!peer.isPeerConnected) return;
-
-    const syncOutgoingVideoTrack = async () => {
-      try {
-        if (media.isSharingScreen && media.screenStream) {
-          await peer.replaceTrack(media.screenStream);
-        } else if (media.localStream) {
-          await peer.replaceTrack(media.localStream);
-        }
-      } catch (error) {
-        console.error('[CALL] SCREEN SHARE ERROR:', error);
+  const replaceOutgoingVideo = async (stream, failureMessage) => {
+    try {
+      peer.replaceVideoTrackForAllPeers(stream);
+    } catch (error) {
+      console.error('[CALL] VIDEO TRACK REPLACE ERROR:', error);
+      if (failureMessage && typeof showToast === 'function') {
+        showToast(failureMessage);
       }
-    };
+    }
+  };
 
-    syncOutgoingVideoTrack();
-  }, [
-    media.isSharingScreen,
-    media.screenStream,
-    media.localStream,
-    peer.isPeerConnected,
-    peer.replaceTrack,
-  ]);
-
-  const restoreCameraTrack = async () => {
+  const restoreCameraTrackForAllPeers = async () => {
     if (!media.localStream) {
       return;
     }
-
-    try {
-      if (peer.isPeerConnected) {
-        await peer.replaceTrack(media.localStream);
-      }
-      console.log('[CALL] CAMERA RESTORED');
-    } catch (error) {
-      console.error('[CALL] SCREEN SHARE ERROR:', error);
-    }
+    await replaceOutgoingVideo(media.localStream);
+    console.log('[CALL] CAMERA RESTORED FOR ALL PEERS');
   };
 
   const startScreenShare = async () => {
@@ -86,25 +70,22 @@ export function useCall({ showToast } = {}) {
     }
 
     const stream = await media.startScreenShare(async () => {
-      await restoreCameraTrack();
+      sendMediaState('screen', false);
+      await restoreCameraTrackForAllPeers();
     });
     if (!stream) {
       return;
     }
 
-    try {
-      if (peer.isPeerConnected) {
-        await peer.replaceTrack(stream);
-      }
-      console.log('[CALL] SCREEN SHARE STARTED');
-    } catch (error) {
-      console.error('[CALL] SCREEN SHARE ERROR:', error);
-    }
+    await replaceOutgoingVideo(stream);
+    sendMediaState('screen', true);
+    console.log('[CALL] SCREEN SHARE STARTED');
   };
 
   const stopScreenShare = async () => {
     media.stopScreenShare();
-    await restoreCameraTrack();
+    sendMediaState('screen', false);
+    await restoreCameraTrackForAllPeers();
   };
 
   const switchCamera = async () => {
@@ -113,11 +94,12 @@ export function useCall({ showToast } = {}) {
       if (!stream || media.isSharingScreen) {
         return;
       }
-      if (peer.isPeerConnected) {
-        await peer.replaceTrack(stream);
-      }
+      await replaceOutgoingVideo(stream);
     } catch (error) {
-      console.error('[CALL] SCREEN SHARE ERROR:', error);
+      console.error('[CALL] CAMERA SWITCH ERROR:', error);
+      if (typeof showToast === 'function') {
+        showToast('Could not switch camera.');
+      }
     }
   };
 
@@ -125,14 +107,16 @@ export function useCall({ showToast } = {}) {
     console.log('[CALL] LEAVE CLICKED');
     media.stopAllMedia();
     console.log('[CALL] LOCAL TRACKS STOPPED');
-    peer.destroyPeer();
+    peer.destroyAllPeers();
+    console.log('[CALL] PEER CONNECTIONS CLOSED');
     socket.leaveCallSocket();
   };
 
   return {
     ...media,
     ...socket,
-    ...peer,
+    remoteStreams: peer.remoteStreams,
+    speakingIds,
     startScreenShare,
     stopScreenShare,
     switchCamera,

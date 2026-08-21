@@ -6,4 +6,7 @@ export const config = {
     ? corsOrigin.split(',').map((origin) => origin.trim())
     : corsOrigin.trim(),
   roomId: 'vidchat-room',
+  minNameLength: 2,
+  maxNameLength: 30,
+  maxRoomIdLength: 64,
 };

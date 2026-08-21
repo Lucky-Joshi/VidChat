@@ -1,26 +1,37 @@
+import { ParticipantVideo } from './ParticipantVideo';
+
+function getGridColumnCount(participantCount) {
+  if (participantCount <= 1) return 1;
+  if (participantCount <= 4) return 2;
+  if (participantCount <= 9) return 3;
+  return 4;
+}
+
 export function VideoGrid({
-  remoteVideoRef,
+  remoteParticipants,
+  remoteStreams,
   localVideoRef,
+  displayName,
   isSharingScreen,
   isPartnerConnected,
-  connectionState,
+  speakingIds,
 }) {
+  const gridClass = `participant-grid cols-${getGridColumnCount(remoteParticipants.length)}`;
+
   return (
     <div id="video-grid" className="video-grid">
-      <div className="video-container remote-video">
-        {isPartnerConnected ? (
-          <video
-            id="remote-video-element"
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            muted={false}
-            controls={false}
-            className="video-element"
-            style={{ objectFit: 'contain' }}
+      <div id="participant-grid" className={gridClass}>
+        {remoteParticipants.map((participant) => (
+          <ParticipantVideo
+            key={participant.socketId}
+            participant={participant}
+            stream={remoteStreams[participant.socketId]}
+            isSpeaking={speakingIds.has(participant.socketId)}
           />
-        ) : (
-          <div className="video-placeholder">
+        ))}
+
+        {!isPartnerConnected && (
+          <div className="video-placeholder grid-placeholder">
             <div className="placeholder-avatar">
               <svg
                 width="48"
@@ -42,15 +53,11 @@ export function VideoGrid({
             </p>
           </div>
         )}
-        {isPartnerConnected && (
-          <span className="video-label partner-label">Partner</span>
-        )}
       </div>
 
       <div
-        className={`video-container local-video ${
-          isSharingScreen ? 'screen-sharing-active' : ''
-        }`}
+        id="local-video-container"
+        className={`local-video ${isSharingScreen ? 'screen-sharing-active' : ''}`}
       >
         <video
           id="local-video-element"
@@ -59,10 +66,9 @@ export function VideoGrid({
           playsInline
           muted
           className="video-element"
-          style={{ objectFit: 'cover' }}
         />
-        <span className="video-label">
-          {isSharingScreen ? '📺 Sharing Screen' : 'You'}
+        <span className="video-label local-label">
+          {isSharingScreen ? 'Sharing Screen' : `${displayName} (You)`}
         </span>
       </div>
     </div>
