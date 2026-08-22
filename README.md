@@ -1,17 +1,17 @@
 # VidChat
 
-A lightweight 2-person video calling application built for pair programming, coding interviews, and remote collaboration. Features real-time video calling, audio communication, and screen sharing with a focus on simplicity and reliability.
+A lightweight multi-participant video calling application built for pair programming, coding interviews, and remote collaboration. Real-time video, audio, screen sharing, and live participant state — with no accounts and no database.
 
-**No authentication. No database. No chat. Just instant peer-to-peer connection.**
+**No authentication. No database. No chat. Just instant peer-to-peer connections.**
 
 ---
 
 ## 🎯 Quick Overview
 
-**What it is:** A real-time video conferencing application for exactly 2 users
-**How it works:** Peer-to-peer WebRTC connections with Socket.IO signaling
-**Use cases:** Pair programming, coding interviews, screen sharing sessions
-**Deployment:** Frontend on Vercel, Backend on Render
+- **What it is:** A real-time group video conferencing app (WebRTC mesh — practical limit ~6–8 participants)
+- **How it works:** Native `RTCPeerConnection` mesh with Socket.IO signaling
+- **Use cases:** Pair programming, coding interviews, study groups, screen sharing sessions
+- **Deployment:** Frontend on Vercel (or any static host), Backend on Render (or any Node host)
 
 ---
 
@@ -22,8 +22,9 @@ A lightweight 2-person video calling application built for pair programming, cod
 - [Quick Start](#-quick-start)
 - [Project Structure](#-project-structure)
 - [Architecture](#-architecture)
-- [API & Events](#-api--events)
-- [Configuration](#-configuration)
+- [API & Events](#--api--events)
+- [Configuration](#️-configuration)
+- [TURN Server Setup](#-turn-server-setup)
 - [Deployment](#-deployment)
 - [Troubleshooting](#-troubleshooting)
 - [Development](#-development)
@@ -34,25 +35,28 @@ A lightweight 2-person video calling application built for pair programming, cod
 ## ✨ Features
 
 ### Core Communication
+- **Multi-participant calls** — Everyone connects to everyone via a WebRTC mesh; join/leave at any time
+- **Display names** — Name entry screen (persisted in `localStorage`), rename mid-call, name validation on client and server
 - **Video Calling** — Enable/disable camera with real-time toggle
-- **Audio Calling** — Mute/unmute microphone with echo cancellation
-- **Screen Sharing** — Share your entire screen for code walkthroughs and demos
+- **Audio Calling** — Mute/unmute microphone with echo cancellation / noise suppression
+- **Screen Sharing** — Share your screen to all participants via `replaceTrack()` (camera stays switchable)
+- **Speaking Detection** — Active-speaker highlighting using the Web Audio API
 
 ### Smart Room Management
-- **Auto-Connect** — Automatically joins the fixed study room (`vidchat-room`)
-- **Room Guard** — Prevents third users from joining (max 2 users enforced)
-- **Waiting Status** — Clear waiting screen while partner joins
-- **Room Full Indicator** — Friendly message when room is at capacity
+- **Auto-Connect** — Automatically joins the fixed room (`vidchat-room`)
+- **Live Participant List** — Tiles appear instantly as people join, with per-tile mic/camera/screen state
+- **Waiting Status** — Clear waiting screen while you are alone in the room
 
 ### Reliability & Recovery
-- **Connection Recovery** — Auto-reconnects on network interruption
-- **Trickle ICE** — Enables faster peer connection establishment
+- **Connection Recovery** — Auto-reconnects signaling; peers reset and rebuild cleanly after reconnects
+- **Glare-Free Negotiation** — Deterministic offer rule (lexicographically smaller socket ID initiates), implicit rollback support
+- **ICE Hardening** — Trickle ICE, candidate buffering until remote description exists, automatic ICE restart on failure, TURN relay support
 - **Health Check** — Backend health monitoring for deployment verification
-- **Graceful Cleanup** — Proper room cleanup on user disconnect
+- **Graceful Cleanup** — Room cleanup on leave/disconnect, stale socket pruning
 
 ### User Experience
 - **Permission Handling** — Friendly error messages for denied permissions
-- **Media State Sync** — Remote user sees your camera/mic status in real-time
+- **Media State Sync** — Everyone sees who is muted/camera-off/screen-sharing in real time
 - **Responsive Design** — Desktop, tablet, and mobile support
 - **Dark Theme** — Eye-friendly dark interface optimized for long coding sessions
 - **Error Boundary** — Graceful error handling with reload option
@@ -61,13 +65,13 @@ A lightweight 2-person video calling application built for pair programming, cod
 
 ## 🛠️ Tech Stack
 
-| Layer      | Technology                                  | Version |
-|------------|---------------------------------------------|---------|
-| **Frontend** | React 18, Vite, CSS3, Socket.IO Client      | 18.3.1  |
-| **WebRTC** | Simple Peer (WebRTC abstraction)           | 9.11.1  |
-| **Backend** | Node.js, Express, Socket.IO                | LTS     |
-| **Build** | Vite                                        | 6.0.3   |
-| **Deployment** | Frontend → Vercel, Backend → Render         | —       |
+| Layer | Technology | Version |
+|-------|------------|---------|
+| **Frontend** | React 18, Vite, CSS3, Socket.IO Client | 18.3.1 |
+| **WebRTC** | Native `RTCPeerConnection` (no wrapper library) | — |
+| **Backend** | Node.js, Express, Socket.IO | LTS |
+| **Build** | Vite | ^6 |
+| **Deployment** | Frontend → static host, Backend → Node host | — |
 
 ### Key Dependencies
 
@@ -77,12 +81,12 @@ A lightweight 2-person video calling application built for pair programming, cod
 - `cors` ^2.8.5 — Cross-Origin Resource Sharing middleware
 
 **Frontend (`frontend/package.json`):**
-- `react` ^18.3.1 — UI library
-- `react-dom` ^18.3.1 — React DOM renderer
+- `react` / `react-dom` ^18.3.1 — UI library
 - `socket.io-client` ^4.8.1 — WebSocket client
-- `simple-peer` ^9.11.1 — WebRTC wrapper
-- `vite` ^6.0.3 — Build tool
-- `@vitejs/plugin-react` ^4.3.4 — React plugin for Vite
+- `vite` ^6 — Build tool
+- `@vitejs/plugin-react` ^4.3.4 — React plugin
+
+> Note: `frontend/package.json` contains an `allowScripts.esbuild = true` entry. npm ≥ 11.16 blocks package install scripts by default; this approves esbuild's postinstall explicitly.
 
 ---
 
@@ -90,8 +94,7 @@ A lightweight 2-person video calling application built for pair programming, cod
 
 ### Prerequisites
 
-- **Node.js** 18 or higher
-- **npm** 9 or higher
+- **Node.js** 20 or higher
 - Modern browser with WebRTC support (Chrome, Firefox, Safari, Edge)
 
 ### 1️⃣ Backend Setup
@@ -112,23 +115,23 @@ The server starts on `http://localhost:3001`.
 
 ```bash
 cd frontend
-npm install
+npm install        # see note below if npm warns about install scripts
 npm run dev
 ```
 
 The app opens at `http://localhost:5173`.
 
-**Available commands:**
-- `npm run dev` — Start Vite dev server with HMR
-- `npm run build` — Build for production
-- `npm run preview` — Preview production build locally
+> On npm ≥ 11.16 you may see an `allow-scripts` warning about `esbuild`. The repo already whitelists it via `"allowScripts"` in `package.json`, so installs work out of the box.
 
 ### 3️⃣ Testing Locally
 
-Open **two separate browser windows** (or tabs) at `http://localhost:5173`:
-- Tab 1: You will see "Waiting for partner..."
-- Tab 2: Both users connect and see each other
-- Use controls to enable/disable camera, mute/unmute audio, or share screen
+Open **two separate browser windows** at `http://localhost:5173`:
+- Enter a display name in each window
+- Window 1 shows "waiting" until window 2 enters
+- Both windows connect automatically — video/audio flow P2P
+- Use controls to toggle camera/mic or share your screen
+
+Locally this always works because both tabs are on the same machine. **Testing across different networks requires a TURN server** — see [TURN Server Setup](#-turn-server-setup).
 
 ---
 
@@ -137,123 +140,101 @@ Open **two separate browser windows** (or tabs) at `http://localhost:5173`:
 ```
 VidChat/
 ├── README.md                       # This file
-├── .gitignore                      # Git ignore rules
+├── .gitignore                      # Git ignore rules (.env files excluded)
 │
 ├── frontend/                       # React client application
 │   ├── src/
-│   │   ├── components/             # Reusable UI components
-│   │   │   ├── ConnectionStatus.jsx
-│   │   │   ├── ControlBar.jsx      # Video/audio/share controls
-│   │   │   ├── PermissionPrompt.jsx
-│   │   │   ├── RoomFull.jsx        # Max users reached message
-│   │   │   └── VideoGrid.jsx       # Video display grid
-│   │   ├── hooks/                  # Custom React hooks
-│   │   │   ├── useCall.js          # Main orchestrator hook
-│   │   │   ├── useMedia.js         # Camera, mic, screen share logic
-│   │   │   ├── usePeer.js          # WebRTC peer connection
-│   │   │   └── useSocket.js        # Socket.IO connection management
+│   │   ├── components/
+│   │   │   ├── ConnectionStatus.jsx  # Signaling/connection status banner
+│   │   │   ├── ControlBar.jsx        # Mic/camera/screen/leave controls
+│   │   │   ├── NameEntry.jsx         # Display-name entry modal
+│   │   │   ├── ParticipantVideo.jsx  # Single participant tile (video/avatar + overlays)
+│   │   │   ├── PermissionPrompt.jsx  # Camera/mic permission states
+│   │   │   ├── SettingsMenu.jsx      # Rename / device settings menu
+│   │   │   ├── Toast.jsx             # Transient notifications
+│   │   │   ├── VideoGrid.jsx         # Responsive participant grid
+│   │   │   └── RoomFull.jsx          # (unused legacy component)
+│   │   ├── hooks/
+│   │   │   ├── useCall.js            # Orchestrator (composes all hooks)
+│   │   │   ├── useMedia.js           # Camera, mic, screen share logic
+│   │   │   ├── usePeer.js            # WebRTC mesh (native RTCPeerConnection)
+│   │   │   ├── useSocket.js          # Socket.IO events + participants state
+│   │   │   └── useSpeaking.js        # Audio-level speaking detection
 │   │   ├── pages/
-│   │   │   └── CallPage.jsx        # Main call interface
+│   │   │   └── CallPage.jsx          # Main call interface
 │   │   ├── services/
-│   │   │   └── socket.js           # Socket.IO singleton
+│   │   │   └── socket.js             # Socket.IO singleton + emit helpers
 │   │   ├── styles/
-│   │   │   └── index.css           # Global styles (dark theme)
+│   │   │   └── index.css             # Global styles (dark theme)
 │   │   ├── utils/
-│   │   │   └── constants.js        # App constants and config
-│   │   ├── App.jsx                 # Root component with error boundary
-│   │   └── main.jsx                # App entry point
-│   ├── index.html                  # HTML template
-│   ├── vite.config.js              # Vite configuration
-│   ├── package.json
+│   │   │   ├── constants.js          # RTC config, constraints, room id
+│   │   │   └── validation.js         # Display-name validation
+│   │   ├── App.jsx                   # Root component with error boundary
+│   │   └── main.jsx                  # App entry point
+│   ├── index.html
+│   ├── vite.config.js
+│   ├── package.json                  # includes allowScripts policy
 │   ├── .env.example
 │   └── .gitignore
 │
 ├── backend/                        # Node.js/Express server
 │   ├── src/
-│   │   ├── index.js                # Server entry point
-│   │   ├── config/
-│   │   │   └── index.js            # Configuration management
-│   │   ├── controllers/
-│   │   │   └── health.js           # Health check endpoint
-│   │   └── socket/
-│   │       └── handler.js          # Socket.IO event handlers
+│   │   ├── index.js                # Server entry point (HTTP + Socket.IO)
+│   │   ├── config/index.js         # Config from env vars
+│   │   ├── controllers/health.js   # Health check endpoint
+│   │   └── socket/handler.js       # Room state + signaling relay
 │   ├── package.json
-│   ├── .env.example
-│   └── .gitignore
+│   └── .env.example
 │
 └── docs/                           # Documentation
     ├── PRD.md                      # Product Requirements Document
     ├── TRD.md                      # Technical Requirements Document
     ├── DESIGN.md                   # UI/UX Design details
     ├── APP_FLOW.md                 # Application flow diagram
-    └── USER_FLOW.md                # User interaction flow
+    └── USER_FLOW.md                # User interaction flows
 ```
 
 ---
 
 ## 🏗️ Architecture
 
-### High-Level Diagram
+### Topology
+
+VidChat uses a **full mesh**: every participant maintains one `RTCPeerConnection` to every other participant. The server only relays signaling (SDP offers/answers, ICE candidates) and room state — media never touches it.
 
 ```
-┌─────────────────────────┐                ┌─────────────────────────┐
-│   User A (Browser)      │                │   User B (Browser)      │
-├─────────────────────────┤                ├─────────────────────────┤
-│  React App              │                │  React App              │
-│  ├─ CallPage           │                │  ├─ CallPage           │
-│  ├─ useCall Hook       │                │  ├─ useCall Hook       │
-│  ├─ useMedia Hook      │                │  ├─ useMedia Hook      │
-│  └─ usePeer Hook       │                │  └─ usePeer Hook       │
-└────────┬────────────────┘                └────────┬────────────────┘
-         │ Socket.IO                                │ Socket.IO
-         │ (Signaling)                              │ (Signaling)
-         └─────────────────────────┬────────────────┘
-                                   │
-                        ┌──────────▼──────────┐
-                        │  Signal Server      │
-                        │  (Express + SIO)    │
-                        │  Port: 3001         │
-                        │  Handlers:          │
-                        │  ├─ join-room      │
-                        │  ├─ offer          │
-                        │  ├─ answer         │
-                        │  ├─ ice-candidate  │
-                        │  ├─ media-state    │
-                        │  └─ leave-room     │
-                        └────────────────────┘
-         ┌──────────────────────────┴──────────────────────────┐
-         │                                                      │
-    ┌────▼─────┐                                          ┌────▼─────┐
-    │  WebRTC   │◄─────────────────────────────────────────│  WebRTC   │
-    │ Peer Conn │  Offer/Answer/ICE Candidates           │ Peer Conn │
-    │           │         (SDP Signaling)                │           │
-    │  Stream   │                                         │  Stream   │
-    │  Flow     │                                         │  Flow     │
-    └───────────┘                                         └───────────┘
-         │                                                     │
-         └──────────────────────────┬──────────────────────────┘
-                                    │
-              P2P Video/Audio/Screen (Direct Connection)
+                    ┌────────────────────────┐
+                    │     Signal Server      │
+                    │   (Express + SIO :3001)│
+                    │ rooms Map<roomId, Map> │
+                    └───────────┬────────────┘
+              join-room / offer / answer / ice-candidate
+             ┌────────────────┼────────────────┐
+             ▼                ▼                ▼
+      ┌────────────┐   ┌────────────┐   ┌────────────┐
+      │ Browser A  │◄─►│ Browser B  │◄─►│ Browser C  │
+      └─────┬──────┘   └────────────┘   └─────┬──────┘
+            │                                 │
+            └────────────►◄───────────────────┘
+              Direct P2P media (STUN) or relayed (TURN)
 ```
 
 ### Data Flow
 
-**Connection Establishment:**
-1. User A opens app → `useSocket` connects to signaling server
-2. User A emits `join-room` → Server adds to room
-3. User B opens app → `useSocket` connects to signaling server
-4. User B emits `join-room` → Server detects room has 1 user
-5. Server emits `ready` to both users with `shouldCreateOffer` flag
-6. User A (offer creator) generates SDP offer via Simple Peer
-7. User A sends offer via Socket.IO to User B
-8. User B receives offer → generates SDP answer
-9. User B sends answer back to User A
-10. Both exchange ICE candidates for NAT traversal
-11. WebRTC connection established → media streams flow P2P
+**Joining:**
+1. User opens app → name entry → media permission granted
+2. Client emits `join-room { roomId, name }`
+3. Server adds `{ name, mediaState }` to the room map, replies with a `participants` snapshot (includes self; self filtered client-side), broadcasts `user-joined { peerId, name }` to existing members
+4. If alone, client receives `waiting-for-partner`
 
-**Media State Sync:**
-- When User A disables camera → emits `media-state` with type='video', enabled=false
-- Server broadcasts to room → User B receives and updates UI accordingly
+**Connecting (per new peer pair):**
+5. Each side creates an `RTCPeerConnection`; local tracks are attached immediately
+6. **Initiator rule:** the side whose own socket ID sorts lexicographically *before* the peer's creates and sends the offer (via `onnegotiationneeded` plus an explicit kick). The other side waits.
+7. Receiver applies the offer (implicit rollback supported), attaches its tracks, sends an `answer`
+8. ICE candidates trickle both ways; candidates arriving before the remote description are buffered per-peer
+9. `connectionState === 'connected'` → media flows; `ontrack` populates the tile's `MediaStream`
+
+**During call:** toggles emit `media-state`; renames emit `update-name`; screen share swaps the outgoing video track on every peer with `replaceTrack()`.
 
 ---
 
@@ -265,26 +246,29 @@ VidChat/
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `join-room` | `{}` | Join the fixed video room |
-| `offer` | `{ to, offer }` | Send WebRTC offer to peer |
-| `answer` | `{ to, answer }` | Send WebRTC answer to peer |
-| `ice-candidate` | `{ to, candidate }` | Send ICE candidate to peer |
-| `media-state` | `{ type, enabled }` | Broadcast media state (video/audio) |
+| `join-room` | `{ roomId, name }` | Join/create a room with a validated display name |
+| `offer` | `{ target, offer }` | SDP offer for a specific peer |
+| `answer` | `{ target, answer }` | SDP answer for a specific peer |
+| `ice-candidate` | `{ target, candidate }` | Trickle ICE candidate for a specific peer |
+| `media-state` | `{ type, enabled }` | type ∈ `microphone \| camera \| screen` |
+| `update-name` | `{ name }` | Rename mid-call (broadcasts fresh `participants`) |
 | `leave-room` | `{}` | Explicitly leave the room |
 
 #### Server → Client
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `waiting-for-partner` | `{}` | Waiting for second user to join |
-| `user-joined` | `{ peerId }` | Second user joined, start offer |
-| `ready` | `{ peerId, shouldCreateOffer }` | Both users ready, exchange SDP |
-| `room-full` | `{}` | Room at max capacity (2 users) |
-| `user-left` | `{ peerId }` | Peer disconnected |
-| `offer` | `{ from, offer }` | Received WebRTC offer |
-| `answer` | `{ from, answer }` | Received WebRTC answer |
+| `participants` | `{ roomId, participants[] }` | Full snapshot: `{ socketId, name, mediaState }` (includes self) |
+| `user-joined` | `{ peerId, name }` | New participant joined |
+| `waiting-for-partner` | `{}` | You are alone in the room |
+| `user-left` | `{ peerId }` | Participant left/disconnected |
+| `offer` | `{ from, offer }` | Received SDP offer |
+| `answer` | `{ from, answer }` | Received SDP answer |
 | `ice-candidate` | `{ from, candidate }` | Received ICE candidate |
 | `media-state` | `{ userId, type, enabled }` | Peer's media state changed |
+| `join-error` | `{ reason, message }` | Invalid name (length must be 2–30 chars) |
+
+Signaling payloads are validated server-side: target must be a connected socket in the same room, or the message is dropped with a log line.
 
 ### HTTP Endpoints
 
@@ -296,11 +280,9 @@ VidChat/
 
 ## ⚙️ Configuration
 
-### Environment Variables
+> ⚠️ **All `VITE_*` variables are baked into the bundle at BUILD time.** Setting them in `.env` only affects builds on that same machine — and `.env` is gitignored, so CI/platform builds never see it. Configure them as build environment variables on your hosting platform.
 
-#### Backend (`backend/.env`)
-
-Create file from `backend/.env.example`:
+### Backend (`backend/.env`)
 
 ```env
 PORT=3001
@@ -309,253 +291,175 @@ CORS_ORIGIN=http://localhost:5173
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3001` | Server port to listen on |
-| `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origins (comma-separated for multiple) |
+| `PORT` | `3001` | Server port |
+| `CORS_ORIGIN` | `http://localhost:5173` | Allowed origins (comma-separated for multiple) |
 
-**Production Example:**
-```env
-PORT=3001
-CORS_ORIGIN=https://vidchat.vercel.app,https://app.vidchat.com
-```
-
-#### Frontend (`frontend/.env`)
-
-Create file from `frontend/.env.example`:
+### Frontend (`frontend/.env` — local development only!)
 
 ```env
 VITE_SOCKET_URL=http://localhost:3001
+# Optional but required across networks:
+VITE_TURN_URL=turn:host:port,turns:host:port?transport=tcp
+VITE_TURN_USERNAME=...
+VITE_TURN_CREDENTIAL=...
+# Or full override:
+VITE_ICE_SERVERS=[{"urls":"stun:..."},{"urls":"turn:...","username":"...","credential":"..."}]
 ```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VITE_SOCKET_URL` | `http://localhost:3001` | Backend Socket.IO server URL |
+| `VITE_SOCKET_URL` | `http://localhost:3001` | Signaling server URL |
+| `VITE_TURN_URL` | *(none)* | TURN URLs, comma-separated (TCP/TLS variants recommended) |
+| `VITE_TURN_USERNAME` | *(none)* | TURN username |
+| `VITE_TURN_CREDENTIAL` | *(none)* | TURN credential |
+| `VITE_ICE_SERVERS` | *(none)* | Full JSON replacement for `iceServers` |
 
-**Production Example:**
-```env
-VITE_SOCKET_URL=https://vidchat-api.onrender.com
-```
+Production builds without a TURN server log a console warning: `[CONFIG] No TURN server configured...`
 
-### WebRTC Configuration (Hardcoded)
-
-Defined in frontend code:
+### WebRTC Configuration (`frontend/src/utils/constants.js`)
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| STUN Server 1 | `stun:stun.l.google.com:19302` | NAT traversal |
-| STUN Server 2 | `stun:stun1.l.google.com:19302` | Redundancy |
-| Trickle ICE | Enabled | Faster connection |
+| STUN servers | Google STUN ×2 | NAT discovery (free, no signup) |
+| TURN servers | From env vars | Media relay when direct paths fail |
+| `iceCandidatePoolSize` | 10 | Faster candidate gathering |
 | Room ID | `vidchat-room` | Fixed room identifier |
-| Max Users | 2 | Room capacity limit |
-| ICE Timeout | 10s (ping), 5s (timeout) | Connection keepalive |
+
+---
+
+## 🌐 TURN Server Setup
+
+STUN alone cannot traverse symmetric NATs / CGNAT (mobile hotspots, carrier NAT, corporate networks). Symptoms of missing/broken TURN: **participant names appear, but video and audio never show.**
+
+There is no longer a reliable free credential-less public TURN service. Options:
+
+1. **Metered.ca free tier (easiest)** — sign up free (500 MB/month), copy credentials from the dashboard into `VITE_TURN_URL` / `VITE_TURN_USERNAME` / `VITE_TURN_CREDENTIAL`.
+2. **Self-host coturn** on a VPS with a public IP.
+3. Any commercial provider (Twilio NTS, Cloudflare Calls TURN, Xirsys…).
+
+Set the values as platform build env vars and redeploy. Verify in DevTools console: the `[CONFIG] No TURN server configured...` warning must be gone.
 
 ---
 
 ## 🚢 Deployment
 
-### Backend → Render.com
+### Backend (Render.com example)
 
-1. **Create Web Service**
-   - Go to [render.com](https://render.com)
-   - Click "New +" → "Web Service"
-   - Connect your GitHub repository
-
-2. **Configure Build & Start**
-   ```
-   Root Directory: backend
-   Build Command: npm install
-   Start Command: node src/index.js
-   Environment: Node
-   ```
-
-3. **Add Environment Variables**
+1. New Web Service → connect repo
+2. Root Directory: `backend` · Build: `npm install` · Start: `node src/index.js`
+3. Environment variables:
    ```env
-   PORT=3001
    CORS_ORIGIN=https://your-frontend.vercel.app
    ```
+4. Note your backend URL (e.g., `https://vidchat-api.onrender.com`). Health check: `/health`.
 
-4. **Deploy**
-   - Click "Create Web Service"
-   - Render auto-deploys on git push
-   - Note your backend URL (e.g., `https://vidchat-backend.onrender.com`)
+### Frontend (Vercel example)
 
-### Frontend → Vercel.com
-
-1. **Import Project**
-   - Go to [vercel.com](https://vercel.com)
-   - Click "Add New..." → "Project"
-   - Import your GitHub repository
-
-2. **Configure Build**
-   ```
-   Framework Preset: Vite
-   Root Directory: frontend
-   Build Command: npm run build
-   Output Directory: dist
-   ```
-
-3. **Add Environment Variables**
+1. Import project → Framework Preset: Vite · Root Directory: `frontend` · Output: `dist`
+2. **Build environment variables** (not runtime!):
    ```env
-   VITE_SOCKET_URL=https://your-backend.onrender.com
+   VITE_SOCKET_URL=https://vidchat-api.onrender.com
+   VITE_TURN_URL=...        # from your TURN provider
+   VITE_TURN_USERNAME=...
+   VITE_TURN_CREDENTIAL=...
    ```
-
-4. **Deploy**
-   - Click "Deploy"
-   - Vercel auto-deploys on git push
-   - Get your frontend URL (e.g., `https://vidchat.vercel.app`)
+3. Deploy. Any change to `VITE_*` values requires a rebuild/redeploy.
 
 ### Post-Deployment Checklist
 
-- [ ] Backend health check: `curl https://your-backend.onrender.com/health`
-- [ ] Update backend `CORS_ORIGIN` to match frontend URL
-- [ ] Update frontend `VITE_SOCKET_URL` to match backend URL
-- [ ] Test with two browser tabs on both URLs
-- [ ] Verify camera/mic permissions requested
-- [ ] Test screen sharing on mobile
-- [ ] Monitor logs for connection issues
+- [ ] Backend health: `curl https://your-backend.onrender.com/health`
+- [ ] Backend `CORS_ORIGIN` matches the exact frontend origin(s)
+- [ ] Frontend rebuilt with correct `VITE_SOCKET_URL` (no localhost!)
+- [ ] TURN configured — production console shows **no** `[CONFIG] No TURN server configured` warning
+- [ ] Two browsers on **different networks** can see/hear each other
+- [ ] Screen share works over HTTPS
 
 ---
 
 ## 🔍 Troubleshooting
 
-### Connection Issues
+### Names appear but no video/audio (most common)
 
-**Problem:** "Waiting for partner..." never resolves
-- **Check:** Is backend running? (`npm run dev` in backend folder)
-- **Check:** Is `CORS_ORIGIN` in backend `.env` matching frontend URL?
-- **Check:** Is `VITE_SOCKET_URL` in frontend `.env` correct?
-- **Check:** Browser console for errors
+This means signaling works but the WebRTC media path failed:
 
-**Problem:** Camera/Microphone not working
-- Verify browser permissions (check address bar)
-- Clear browser cache and reload
-- Try different browser
-- Check device permission settings (OS level)
+1. Open DevTools console and look for `[ICE] FAILED ...` lines — they show which candidate types were attempted (e.g., `local=srflx remote=srflx` means TURN was never reached).
+2. `[ICE] candidate error code=401` → wrong TURN credentials; `code=701` → TURN unreachable.
+3. `[CONFIG] No TURN server configured` warning → env vars missing from the production build. Remember: `.env` is not deployed; set platform build env vars and rebuild.
+4. Confirm TURN works at https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/ (look for `relay` candidates).
 
-**Problem:** "Room Full" message appears
-- Room is currently at 2-user capacity
-- Wait for one user to disconnect
-- Refresh browser and try again
+### Env vars seem ignored in production
 
-**Problem:** No video/audio after connecting
-- Check media state in browser console
-- Ensure microphone/camera hardware is working
-- Try muting/unmuting from control bar
-- Restart browser
+- `VITE_*` values are compiled in at build time — changing platform env vars without redeploying changes nothing.
+- `.env.example` is documentation only; nothing reads it.
+- `.env` files are gitignored — they never reach CI/platform builds.
 
-**Problem:** Screen sharing not working
-- Some browsers require HTTPS for screen share
-- Desktop only (not mobile)
-- Check browser console for specific errors
-- Try different browser
+### "Waiting for partner..." never resolves
+- Backend running? `CORS_ORIGIN` matches the frontend URL exactly (scheme + host + port)?
+- `VITE_SOCKET_URL` points at the backend (and is reachable — check Network tab WS frames)?
 
-### Performance Issues
+### npm warns about `allow-scripts` / esbuild
+Expected on npm ≥ 11.16. The repo whitelists esbuild via `"allowScripts"` in `frontend/package.json`. If you add packages with install scripts, approve them explicitly (`npm approve-scripts <pkg>`).
 
-**Slow video/audio:**
-- Check network connection quality
-- Reduce browser tabs/processes running
-- Close other video applications
-- Move closer to Wi-Fi router (if using Wi-Fi)
+### Camera/Microphone not working
+Verify browser permissions, clear site settings, try another browser. getUserMedia requires HTTPS in production (localhost is exempt).
 
-**High latency:**
-- Normal for P2P across continents
-- Check STUN server response times
-- Consider TURN server for firewall issues
+### Screen sharing not working
+Desktop browsers only; HTTPS required in production.
 
-### Logging
+### Logging reference
 
-**Backend logs:**
+**Backend:**
 ```
 [BACKEND] SOCKET CONNECT: abc123
-[BACKEND] JOIN-ROOM: abc123 attempting to join vidchat-room (size=0)
-[BACKEND] USER JOINED: abc123
-[BACKEND] ROOM SIZE: 1
+[BACKEND] JOIN-ROOM: abc123 (Alice) joined vidchat-room (size=2)
+[BACKEND] PARTICIPANT REMOVED: abc123 room=vidchat-room removed=true reason=disconnect
 ```
 
-**Frontend:** Check browser DevTools Console (F12)
+**Frontend (DevTools console):**
+```
+[SIGNAL] OFFER HANDLED from=xyz (signalingState=stable)
+[PEER] OFFER CREATED for xyz
+[PEER] xyz connectionState=connected
+[PEER] REMOTE TRACK RECEIVED from xyz
+```
 
 ---
 
 ## 👨‍💻 Development
 
-### Project Setup from Scratch
-
 ```bash
-# Clone and install
 git clone <repo>
-cd vidchat
-
-# Backend
-cd backend && npm install && npm run dev &
-
-# Frontend (in new terminal)
-cd frontend && npm install && npm run dev
+cd VidChat
+cd backend && npm install && npm run dev      # terminal 1
+cd frontend && npm install && npm run dev     # terminal 2
 ```
 
 ### Code Organization
 
-**Frontend:**
-- Hooks manage all logic (media, peer, socket, orchestration)
-- Components focus on UI rendering
-- CSS is global dark theme
-- Socket service is singleton instance
-
-**Backend:**
-- Express handles HTTP (minimal, mostly health check)
-- Socket.IO handles all real-time communication
-- Room management via Map-based user tracking
-- Config centralized for easy deployment
+- All call logic lives in hooks (`useCall` composes `useMedia`, `useSocket`, `usePeer`, `useSpeaking`)
+- Components render only; state flows down from `CallPage`
+- The socket service is a singleton; handlers register once per session
 
 ### Adding Features
 
-**New Socket Event:**
-1. Add handler in `backend/src/socket/handler.js`
-2. Emit corresponding event from frontend hook
-3. Update Socket Events table in README
-
-**New Component:**
-1. Create in `frontend/src/components/`
-2. Import in `CallPage.jsx`
-3. Use hooks to manage state
-
-**New Environment Variable:**
-1. Add to `.env.example`
-2. Read in config (`backend/src/config/index.js` or Vite magic)
-3. Update Configuration section in README
+- **New socket event:** handler in `backend/src/socket/handler.js` → emitter in `services/socket.js` → consumer in a hook → update the events tables above
+- **New env var:** add to the relevant `.env.example` + config module, update Configuration section here
 
 ### Testing Tips
 
-- Use browser DevTools Console for errors
-- Enable Chrome DevTools → Network → WS to watch Socket messages
-- Test on different networks (mobile hotspot, different Wi-Fi)
-- Test on different browsers (Chrome, Firefox, Safari)
-- Monitor `console.log` statements in browser and server
-
----
-
-## 📝 Documentation
-
-Additional documentation in `docs/` folder:
-- **PRD.md** — Product Requirements & Vision
-- **TRD.md** — Technical Architecture & Design Decisions
-- **DESIGN.md** — UI/UX Design Specifications
-- **APP_FLOW.md** — Application Data Flow Diagrams
-- **USER_FLOW.md** — User Interaction Flows
+- Test cross-network with a mobile hotspot before trusting "it works"
+- Chrome DevTools → `chrome://webrtc-internals` for deep connection inspection
+- Watch signaling frames in DevTools → Network → WS
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please:
-1. Test locally before submitting changes
-2. Update README if adding features
-3. Follow existing code style
-4. Keep components small and focused
-
----
+Contributions welcome! Please test locally (including one cross-network test if touching WebRTC), follow existing code style, and keep components/hooks small.
 
 ## 📄 License
 
-MIT License - see LICENSE file for details
+MIT License — see LICENSE file for details.
 
 ---
 
@@ -563,4 +467,4 @@ MIT License - see LICENSE file for details
 
 For issues, feature requests, or feedback, please open an issue on GitHub.
 
-**Last Updated:** January 2026
+**Last Updated:** August 2026
