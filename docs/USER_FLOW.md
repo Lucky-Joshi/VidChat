@@ -1,8 +1,12 @@
 # User Flow
 
-## User A
+## First-Time User (any participant)
 
 Open App
+    ↓
+Type Display Name
+    ↓
+Continue
     ↓
 Allow Camera
     ↓
@@ -10,70 +14,84 @@ Allow Microphone
     ↓
 Join Room
     ↓
-Wait For Partner
+See Participant Grid (self tile)
     ↓
-Connected
+Wait For Others / Connect Automatically
     ↓
-Share Screen (Optional)
-    ↓
-Study Session
+Talk, Toggle Camera/Mic, Share Screen
     ↓
 Leave Call
 
---------------------------------
-
-## User B
+## Returning User
 
 Open App
     ↓
-Allow Camera
+Name Pre-Filled (localStorage)
     ↓
-Allow Microphone
+Continue → straight into the room
+
+## Additional Participants
+
+Each new person who opens the app:
     ↓
-Join Same Room
+Joins the same room
     ↓
-Connected
+Everyone sees their tile appear instantly
     ↓
-View Screen Share
+Mesh connections form automatically
     ↓
-Study Session
-    ↓
-Leave Call
+Everyone can rename mid-call via Settings menu
 
 --------------------------------
 
 ## Happy Path
 
-User A Opens App
+User A opens app, enters name
         ↓
-User B Opens App
+User B opens app, enters name
         ↓
-Connection Established
+Connection established (< 5s)
         ↓
-Video Visible
+Video visible both ways
         ↓
-Audio Active
+Audio active, speaking indicator works
         ↓
-Screen Shared
+Screen shared for code walkthrough
         ↓
-DSA Practice
-        ↓
-Call Ended
+Call ended cleanly by either user
 
 --------------------------------
 
-## Failure Flow
+## Failure Flows
 
 Permission Denied
         ↓
-Show Error Message
+Friendly error message with retry
         ↓
 Retry Permissions
 
---------------------------------
+Invalid Name (empty / too long)
+        ↓
+Inline validation + server join-error
+        ↓
+Prompt to fix name
 
-Connection Lost
+Names Appear But No Video/Audio (NAT blocked media path)
         ↓
-Reconnect Socket
+Console shows [ICE] FAILED diagnostics
         ↓
-Restore Session
+Fix: configure TURN credentials in build env vars and redeploy
+        ↓
+Rejoin call
+
+Socket Disconnects Mid-Call
+        ↓
+Auto-reconnect with backoff
+        ↓
+Session reset → peers rebuilt from fresh participants snapshot
+
+Peer Connection Fails Mid-Call
+        ↓
+Automatic ICE restart
+        ↓
+If still failed → toast notification, connection status banner
