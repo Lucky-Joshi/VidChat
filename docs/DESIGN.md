@@ -52,19 +52,55 @@ Weights:
 
 ## Layout
 
+### Entry State (before joining)
+
+--------------------------------
+|                              |
+|        App Title             |
+|   [ Display Name Input ]     |
+|      [ Continue Button ]     |
+|                              |
+--------------------------------
+
+### Call State (participants grid)
+
 ------------------------------------------------
+|  [Tile: Alice]     [Tile: Bob]               |
 |                                              |
-|               Partner Video                  |
-|                                              |
+|  [Tile: Carol]     [Tile: You]               |
 ------------------------------------------------
 
--------------------    -------------------------
-| My Camera      |    | Shared Screen         |
--------------------    -------------------------
+Each tile:
+
+- `<video>` element when camera is on (`object-fit: cover`)
+- Avatar circle + name fallback when camera is off / stream missing
+- Bottom overlay: display name + mic-off icon when muted
+- Highlight ring while the participant is speaking
+
+Screen share replaces the grid with a large stage view.
 
 ------------------------------------------------
-| Mic | Camera | Share | Stop | Leave         |
+| Mic | Camera | Share | Leave                 |
 ------------------------------------------------
+
+---
+
+## Tile States
+
+Camera on:
+Video visible, name overlaid bottom-left
+
+Camera off:
+Avatar initials centered, name below
+
+Muted:
+Mic-crossed icon next to name
+
+Speaking:
+Colored border/glow around tile
+
+Connecting:
+Subtle pulse until `connectionState === 'connected'`
 
 ---
 
@@ -76,7 +112,7 @@ Filled
 Inactive:
 Outlined
 
-Danger:
+Danger (Leave):
 Red
 
 ---
@@ -84,13 +120,13 @@ Red
 ## Responsive Design
 
 Desktop:
-Primary experience
+Primary experience — grid reflows per participant count
 
 Tablet:
 Supported
 
 Mobile:
-Basic support
+Basic support — single-column grid
 
 ---
 
@@ -106,4 +142,4 @@ Hover:
 Scale 1.02
 
 Transitions:
-Smooth fade
+Smooth fade; tiles fade in on join, collapse smoothly on leave
