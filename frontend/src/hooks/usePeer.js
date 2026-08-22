@@ -70,7 +70,16 @@ export function usePeer({
   const negotiateIfNeeded = useCallback(
     async (peerId) => {
       const peer = peerConnectionsRef.current[peerId];
-      if (!peer || peer.signalingState !== 'stable' || makingOfferRef.current[peerId]) {
+      if (!peer) {
+        return;
+      }
+      if (peer.signalingState !== 'stable') {
+        console.log(
+          `[PEER] Negotiation deferred for ${peerId} (signalingState=${peer.signalingState})`
+        );
+        return;
+      }
+      if (makingOfferRef.current[peerId]) {
         return;
       }
       if (!isInitiatorFor(peerId)) {
@@ -223,14 +232,8 @@ export function usePeer({
 
       try {
         const peer = createPeerConnection(from);
-        if (peer.signalingState !== 'stable') {
-          console.log(
-            `[PEER] Offer from ${from} ignored (signalingState=${peer.signalingState})`
-          );
-          return;
-        }
 
-        console.log(`[SIGNAL] OFFER HANDLED from=${from}`);
+        console.log(`[SIGNAL] OFFER HANDLED from=${from} (signalingState=${peer.signalingState})`);
         await peer.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
@@ -319,9 +322,17 @@ export function usePeer({
       if (peerId === mySocketId) return;
       if (isInitiatorFor(peerId)) {
         createPeerConnection(peerId);
+        negotiateIfNeeded(peerId);
       }
     });
-  }, [remoteParticipants, localStream, mySocketId, isInitiatorFor, createPeerConnection]);
+  }, [
+    remoteParticipants,
+    localStream,
+    mySocketId,
+    isInitiatorFor,
+    createPeerConnection,
+    negotiateIfNeeded,
+  ]);
 
   useEffect(() => {
     if (!localStream) return;

@@ -22,10 +22,30 @@ export function ParticipantVideo({ participant, stream, isSpeaking }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && stream && videoRef.current.srcObject !== stream) {
-      videoRef.current.srcObject = stream;
+    const element = videoRef.current;
+    if (!element || !stream) {
+      return;
     }
-  }, [stream]);
+    if (element.srcObject !== stream) {
+      element.srcObject = stream;
+    }
+
+    const tryPlay = () => {
+      if (element.paused) {
+        element.play().catch((error) => {
+          console.warn(
+            `[PARTICIPANT] Playback blocked for ${participant.socketId}: ${error.name}`
+          );
+        });
+      }
+    };
+
+    tryPlay();
+    element.addEventListener('loadedmetadata', tryPlay);
+    return () => {
+      element.removeEventListener('loadedmetadata', tryPlay);
+    };
+  }, [stream, participant.socketId]);
 
   const mediaState = participant.mediaState || {};
   const isCamEnabled = mediaState.camera !== false;
