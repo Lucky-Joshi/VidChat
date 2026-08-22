@@ -2,30 +2,39 @@
 
 User Opens App
         ↓
-Loading Screen
+Name Entry Screen (display name, remembered locally)
         ↓
-Permission Request
+Continue
         ↓
-Camera Access
+Loading / Permission Request
         ↓
-Microphone Access
+Camera + Microphone Access Granted
         ↓
-Join Fixed Room
+Socket Connection → join-room (vidchat-room)
         ↓
-Socket Connection
+Participants Snapshot Received
         ↓
-Waiting For Partner
+┌─ Alone ──► Waiting For Partner screen
+│                ↓ partner joins (user-joined)
+└─ Others ─► Create one RTCPeerConnection per peer
+                 ↓
+         Deterministic initiator sends SDP offer
+                 ↓
+         Peer answers; ICE candidates trickle
+         (buffered until remote description exists)
+                 ↓
+     connectionState = connected → media flows
+                 ↓
+Group Call Active (grid, speaking indicators,
+media-state sync, rename via update-name)
+                 ↓
+Screen Sharing Optional (replaceTrack to all peers)
+                 ↓
+Leave / Disconnect
         ↓
-Partner Joins
+Tracks stopped, peers destroyed, room notified
         ↓
-WebRTC Handshake
-        ↓
-Connection Established
-        ↓
-Video Call Active
-        ↓
-Screen Sharing Optional
-        ↓
-End Session
-        ↓
-Disconnect
+Server prunes participant, broadcasts user-left
+
+Reconnect path: socket auto-reconnects → session reset
+(peers destroyed, participants re-fetched) → mesh rebuilds.
