@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 
 const POLL_INTERVAL_MS = 300;
 const SPEAKING_THRESHOLD = 0.025;
@@ -6,6 +6,17 @@ const SPEAKING_THRESHOLD = 0.025;
 export function useSpeakingDetection(streamsMap, localStream) {
   const [speakingIds, setSpeakingIds] = useState(() => new Set());
   const speakingRef = useRef(new Set());
+  const latestRef = useRef({ streamsMap, localStream });
+
+  latestRef.current = { streamsMap, localStream };
+
+  const streamsKey = useMemo(
+    () =>
+      Object.keys(streamsMap || {})
+        .sort()
+        .join(',') + (localStream ? '+local' : ''),
+    [streamsMap, localStream]
+  );
 
   useEffect(() => {
     let audioContext = null;
@@ -57,6 +68,24 @@ export function useSpeakingDetection(streamsMap, localStream) {
       return Math.sqrt(sumSquares / entry.data.length);
     };
 
+    const syncAnalysers = () => {
+      const { streamsMap: map, localStream: ls } = latestRef.current;
+      const activeIds = new Set(Object.keys(map || {}));
+      if (ls) {
+        activeIds.add('local');
+      }
+
+      activeIds.forEach((id) => {
+        attachAnalyser(id, id === 'local' ? ls : map[id]);
+      });
+
+      [...analysers.keys()].forEach((id) => {
+        if (!activeIds.has(id)) {
+          detachAnalyser(id);
+        }
+      });
+    };
+
     const poll = () => {
       if (audioContext.state === 'suspended') {
         audioContext.resume().catch(() => {});
@@ -79,27 +108,11 @@ export function useSpeakingDetection(streamsMap, localStream) {
       }
     };
 
-    pollTimer = setInterval(poll, POLL_INTERVAL_MS);
-
-    const syncAnalysers = () => {
-      const activeIds = new Set(Object.keys(streamsMap || {}));
-      if (localStream) {
-        activeIds.add('local');
-      }
-
-      activeIds.forEach((id) => {
-        attachAnalyser(id, id === 'local' ? localStream : streamsMap[id]);
-      });
-
-      [...analysers.keys()].forEach((id) => {
-        if (!activeIds.has(id)) {
-          detachAnalyser(id);
-        }
-      });
-    };
-
     syncAnalysers();
-    poll();
+    pollTimer = setInterval(() => {
+      syncAnalysers();
+      poll();
+    }, POLL_INTERVAL_MS);
 
     return () => {
       if (pollTimer) {
@@ -110,7 +123,7 @@ export function useSpeakingDetection(streamsMap, localStream) {
         audioContext.close().catch(() => {});
       }
     };
-  }, [streamsMap, localStream]);
+  }, [streamsKey]);
 
   return speakingIds;
 }

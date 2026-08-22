@@ -214,7 +214,7 @@ export function usePeer({
   }, [removePeerConnection]);
 
   const processOffer = useCallback(
-    async (from, offer) => {
+    async (offer, from) => {
       if (!localStreamRef.current) {
         console.log(`[PEER] Offer from ${from} buffered (local media not ready)`);
         pendingOffersRef.current.push({ from, offer });
@@ -335,7 +335,7 @@ export function usePeer({
       pendingOffersRef.current = [];
       (async () => {
         for (const { from, offer } of buffered) {
-          await processOffer(from, offer);
+          await processOffer(offer, from);
         }
       })();
     }
