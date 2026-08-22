@@ -4,32 +4,37 @@ const DEFAULT_ICE_SERVERS = [
   {
     urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
   },
-  {
-    urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:443',
-      'turns:openrelay.metered.ca:443?transport=tcp',
-    ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
 ];
 
-function resolveIceServers() {
-  const raw = import.meta.env.VITE_ICE_SERVERS;
-  if (!raw) {
-    return DEFAULT_ICE_SERVERS;
+function buildIceServers() {
+  const rawOverride = import.meta.env.VITE_ICE_SERVERS;
+  if (rawOverride) {
+    try {
+      return JSON.parse(rawOverride);
+    } catch {
+      console.warn('[CONFIG] Invalid VITE_ICE_SERVERS JSON, falling back to defaults');
+    }
   }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    console.warn('[CONFIG] Invalid VITE_ICE_SERVERS JSON, falling back to defaults');
-    return DEFAULT_ICE_SERVERS;
+
+  const servers = [...DEFAULT_ICE_SERVERS];
+  const turnUrls = import.meta.env.VITE_TURN_URL;
+  if (turnUrls) {
+    servers.push({
+      urls: turnUrls.split(',').map((url) => url.trim()),
+      username: import.meta.env.VITE_TURN_USERNAME || '',
+      credential: import.meta.env.VITE_TURN_CREDENTIAL || '',
+    });
+  } else if (import.meta.env.PROD) {
+    console.warn(
+      '[CONFIG] No TURN server configured. Media will fail across NATs/corporate networks. ' +
+        'Set VITE_TURN_URL, VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL (or VITE_ICE_SERVERS) at build time.'
+    );
   }
+  return servers;
 }
 
 export const RTC_CONFIG = {
-  iceServers: resolveIceServers(),
+  iceServers: buildIceServers(),
   iceCandidatePoolSize: 10,
 };
 

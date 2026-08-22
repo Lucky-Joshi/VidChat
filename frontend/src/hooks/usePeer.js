@@ -132,6 +132,25 @@ export function usePeer({
     [negotiateIfNeeded]
   );
 
+  const reportIceFailure = useCallback(async (peerId, peer) => {
+    try {
+      const stats = await peer.getStats();
+      let pairSummary = 'no candidate pair succeeded';
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && (report.selected || report.state === 'succeeded')) {
+          const local = stats.get(report.localCandidateId);
+          const remote = stats.get(report.remoteCandidateId);
+          pairSummary = `last pair local=${local?.candidateType}/${local?.protocol} remote=${
+            remote?.candidateType
+          }/${remote?.protocol}`;
+        }
+      });
+      console.error(`[ICE] FAILED for peer=${peerId}: ${pairSummary}`);
+    } catch {
+      console.error(`[ICE] FAILED for peer=${peerId} (stats unavailable)`);
+    }
+  }, []);
+
   const createPeerConnection = useCallback(
     (peerId) => {
       if (peerConnectionsRef.current[peerId]) {
@@ -141,6 +160,24 @@ export function usePeer({
       const peer = new RTCPeerConnection(RTC_CONFIG);
       peerConnectionsRef.current[peerId] = peer;
       console.log(`[PEER] RTCPeerConnection created for ${peerId}`);
+
+      peer.onicecandidateerror = (event) => {
+        console.warn(
+          `[ICE] candidate error peer=${peerId} code=${event.errorCode} url=${event.url || event.errorText}`
+        );
+      };
+
+      peer.oniceconnectionstatechange = () => {
+        console.log(`[PEER] ${peerId} iceConnectionState=${peer.iceConnectionState}`);
+        if (peer.iceConnectionState === 'failed') {
+          reportIceFailure(peerId, peer);
+          try {
+            peer.restartIce();
+          } catch (error) {
+            console.error(`[PEER] ICE restart failed for ${peerId}:`, error);
+          }
+        }
+      };
 
       peer.onicecandidate = (event) => {
         if (event.candidate) {
@@ -170,12 +207,8 @@ export function usePeer({
       peer.onconnectionstatechange = () => {
         console.log(`[PEER] ${peerId} connectionState=${peer.connectionState}`);
         if (peer.connectionState === 'failed') {
+          reportIceFailure(peerId, peer);
           notifyConnectionFailure(peerId);
-          try {
-            peer.restartIce();
-          } catch (error) {
-            console.error(`[PEER] ICE restart failed for ${peerId}:`, error);
-          }
         }
       };
 
@@ -187,7 +220,7 @@ export function usePeer({
 
       return peer;
     },
-    [notifyConnectionFailure, negotiateIfNeeded, syncLocalTracks]
+    [notifyConnectionFailure, negotiateIfNeeded, reportIceFailure, syncLocalTracks]
   );
 
   const removePeerConnection = useCallback((peerId) => {
